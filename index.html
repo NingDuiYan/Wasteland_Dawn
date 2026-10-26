@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>废土黎明 · 2.5D 视角验证</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #1a1611;
+        overflow: hidden;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      }
+      #game-root {
+        width: 100vw;
+        height: 100vh;
+      }
+      #game-root canvas { display: block; }
+
+      /* HUD 整体不拦截鼠标，保证将来射击不被挡住 */
+      #hud {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        color: #e8dcc8;
+        user-select: none;
+      }
+      .panel {
+        position: absolute;
+        top: 16px;
+        left: 16px;
+        min-width: 208px;
+        padding: 12px 14px;
+        background: rgba(20, 17, 13, 0.78);
+        border: 1px solid rgba(232, 220, 200, 0.16);
+        border-radius: 8px;
+        backdrop-filter: blur(6px);
+        font-size: 12px;
+        line-height: 1.9;
+      }
+      .panel h1 {
+        margin: 0 0 8px;
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: #ffd166;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .row span { color: rgba(232, 220, 200, 0.6); }
+      .row b { font-weight: 600; font-variant-numeric: tabular-nums; }
+      .row b.warn { color: #ff8a5c; }
+      .hint {
+        position: absolute;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 8px 16px;
+        background: rgba(20, 17, 13, 0.78);
+        border: 1px solid rgba(232, 220, 200, 0.16);
+        border-radius: 999px;
+        font-size: 12px;
+        color: rgba(232, 220, 200, 0.75);
+        white-space: nowrap;
+      }
+      .hint kbd {
+        display: inline-block;
+        padding: 1px 6px;
+        margin: 0 2px;
+        border: 1px solid rgba(232, 220, 200, 0.28);
+        border-radius: 4px;
+        background: rgba(232, 220, 200, 0.08);
+        font: inherit;
+        color: #ffd166;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game-root"></div>
+
+    <div id="hud">
+      <div class="panel">
+        <h1>2.5D 遮挡验证</h1>
+        <div class="row"><span>FPS</span><b id="hud-fps">--</b></div>
+        <div class="row"><span>丧尸</span><b id="hud-zombies">--</b></div>
+        <div class="row"><span>坐标</span><b id="hud-coords">--</b></div>
+        <div class="row"><span>被树遮挡</span><b id="hud-occluded">--</b></div>
+        <div class="row"><span>阴影</span><b id="hud-shadows">--</b></div>
+        <div class="row"><span>网格</span><b id="hud-grid">--</b></div>
+      </div>
+
+      <div class="hint">
+        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动 ·
+        <kbd>F</kbd> 阴影开关 · <kbd>G</kbd> 网格开关
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
