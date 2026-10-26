@@ -1,0 +1,6 @@
+BGM: Post Apocalyptic Wastelands [Loop Ready]
+Author: Juhani Junkala
+License: CC0 1.0 Universal (Public Domain Dedication)
+Source page: https://opengameart.org/content/horror-atmosphere
+Usage: src/assets/audio/bgm/wasteland-loop.ogg
+Processing: 原文件 stereo 351kbps 已转码为 mono ~60kbps（时长 323.85s 不变），用于降低网页加载体积
