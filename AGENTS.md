@@ -10,16 +10,17 @@
 - 夜晚（约 2 分钟）：丧尸潮攻向基地，炮台/陷阱自动作战，玩家修墙补枪
 - 无尽模式：难度逐夜递增，死亡结算，`localStorage` 存最高纪录
 
-**当前状态**：设计定稿 + 全部素材就绪，**游戏代码尚未开始**。下一步是搭 Vite + TS + Phaser 骨架，先做 2.5D 遮挡验证场景。
+**当前状态**：工程骨架 + 2.5D 遮挡验证场景已完成并通过浏览器实测（60 FPS、无控制台错误），已推送 `c5e8d48`。下一步进 Phase 1 可玩核心，待办见 `docs/TODO.md`。
 
 ## 关键文档
 
 - 完整设计文档（唯一事实源）：`docs/superpowers/specs/2026-10-26-wasteland-dawn-design.md`
+- 项目汇总与待办：`docs/TODO.md`
 - 本文件只保留 AI 容易搞错的硬规则，数值细节查设计文档
 
-## 技术栈（规划）
+## 技术栈
 
-Phaser 3 + TypeScript + Vite，DOM 覆盖层做 HUD，无后端。
+Phaser 3.90.0 + TypeScript 5.9 + Vite 7.3（版本固定），DOM 覆盖层做 HUD，无后端。
 
 ## 架构硬规则
 
@@ -33,22 +34,23 @@ Phaser 3 + TypeScript + Vite，DOM 覆盖层做 HUD，无后端。
 - 所有立式精灵 `setOrigin(0.5, 1)`，底部中心贴地面
 - 深度 = 脚底世界 y：`depth = sprite.y`，角色/丧尸/树/建筑统一参与
 - 每个立式物件脚下画椭圆阴影，阴影固定画在物件之下、不参与排序
-- 角色**不旋转**，只 `flipX`，永远面向镜头；敌我靠 tint 区分（奔跑者绿、胖尸暗红+1.35x）
+- 角色**不旋转**，只 `flipX`，永远面向镜头；变种区分用**预烘焙染色贴图**（`view/textures.ts`），**禁用 setTint**——Canvas 渲染器（无 WebGL 环境）不支持，会静默失效
 - 建造预览：视觉框 32×24 压扁，实际占格 32×32；底层寻路网格 16px
 - 建筑在 A* 里是"高代价可通行"节点（代价 8 vs 空地 1）：有路绕，无路啃
 
-## 目录约定（目标结构）
+## 目录约定（当前实际结构）
 
 ```
 src/
-├── main.ts          # 入口
-├── config.ts        # 数值表
+├── main.ts          # 入口，Phaser 配置（960x540 FIT + pixelArt）
+├── config.ts        # 数值表（玩家/丧尸/网格/阴影/遮挡参数）
 ├── manifest.ts      # 资产 key → 路径
-├── sim/             # 纯模拟层（GameState + systems/）
-├── scenes/          # BootScene / GameScene（薄）
-├── view/            # 精灵工厂、锚点/深度/阴影、相机
-├── ui/              # DOM HUD
-└── assets/          # 已就位：characters/ environment/ trees/ audio/ licenses/
+├── sim/world.ts     # 纯模拟层（World：玩家/丧尸/树状态 + 推进逻辑）
+├── scenes/GameScene.ts  # 薄场景，读 sim 状态同步精灵
+├── view/entity.ts   # Upright：锚点/深度/阴影 + 遮挡判定
+├── view/textures.ts # 染色贴图预烘焙（Canvas 兼容）
+├── ui/hud.ts        # DOM HUD
+└── assets/          # characters/ environment/ trees/ audio/ licenses/
 ```
 
 ## 编码规范
@@ -92,3 +94,11 @@ src/
 - A* 性能：丧尸上限 150，每帧只重算 8 只（时间分片），先压测 50 只再放开
 - HUD 的 DOM 层必须 `pointer-events` 精确控制，防误触射击
 - 资源经济：初始 40 资源点、每晚重生 15、场上封顶 60 —— 改数值前先读 spec 第 7 节的经济闭环推导
+
+## 实测教训（2.5D 验证场景踩过的坑，勿重蹈）
+
+1. 丧尸会贴脸叠成一点把玩家完全埋住 → sim 层加 `minDistanceToPlayer: 34` 贴近即停
+2. 丧尸互相推开（separation 26）防止叠成一个点，否则看不出遮挡关系
+3. 网格线与地面棋盘格若重合则不可见 → 错开半格 + 提高透明度
+4. 遮挡验证需要确定性布局 → 世界用固定种子随机 + 出生点正上方固定一棵高树
+5. 验证场景用 DOM HUD 而非 canvas 文字：HUD 容器 `pointer-events: none`
