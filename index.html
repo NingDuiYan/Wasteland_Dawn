@@ -3,80 +3,249 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>废土黎明 · 2.5D 视角验证</title>
+    <title>废土黎明 · 第一人称</title>
     <style>
       * { box-sizing: border-box; }
       html, body {
         margin: 0;
         height: 100%;
-        background: #1a1611;
+        background: #0b0d10;
         overflow: hidden;
         font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        color: #e8dcc8;
       }
-      #game-root {
-        width: 100vw;
-        height: 100vh;
-      }
+      #game-root { width: 100vw; height: 100vh; }
       #game-root canvas { display: block; }
 
-      /* HUD 整体不拦截鼠标，保证将来射击不被挡住 */
+      /* HUD 不拦截鼠标：射击全靠 pointerlock，任何覆盖层都不能吃掉点击 */
       #hud {
         position: fixed;
         inset: 0;
         pointer-events: none;
-        color: #e8dcc8;
         user-select: none;
       }
-      .panel {
+
+      /* 受击红闪：径向渐变只压边缘，中间留出来看清敌人 */
+      #hud-hurt {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        opacity: 0;
+        background: radial-gradient(circle at 50% 50%, rgba(150, 20, 16, 0) 42%, rgba(150, 20, 16, 0.75) 100%);
+        transition: opacity 0.08s linear;
+      }
+
+      /* 准星：四条短线留出中心空洞，命中标记在中心叠一个 X */
+      #hud-crosshair {
         position: absolute;
-        top: 16px;
-        left: 16px;
-        min-width: 208px;
-        padding: 12px 14px;
-        background: rgba(20, 17, 13, 0.78);
+        top: 50%;
+        left: 50%;
+        width: 22px;
+        height: 22px;
+        margin: -11px 0 0 -11px;
+        opacity: 0;
+      }
+      #hud-crosshair span {
+        position: absolute;
+        background: rgba(240, 232, 214, 0.85);
+        box-shadow: 0 0 2px rgba(0, 0, 0, 0.9);
+      }
+      #hud-crosshair .n, #hud-crosshair .s { left: 10px; width: 2px; height: 7px; }
+      #hud-crosshair .n { top: 0; }
+      #hud-crosshair .s { bottom: 0; }
+      #hud-crosshair .w, #hud-crosshair .e { top: 10px; height: 2px; width: 7px; }
+      #hud-crosshair .w { left: 0; }
+      #hud-crosshair .e { right: 0; }
+      #hud-hit-marker {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 18px;
+        height: 18px;
+        margin: -9px 0 0 -9px;
+        opacity: 0;
+        transform: rotate(45deg);
+        transition: opacity 0.1s linear;
+      }
+      #hud-hit-marker::before, #hud-hit-marker::after {
+        content: "";
+        position: absolute;
+        background: #ffd166;
+      }
+      #hud-hit-marker::before { left: 8px; top: 0; width: 2px; height: 18px; }
+      #hud-hit-marker::after { top: 8px; left: 0; height: 2px; width: 18px; }
+      #hud-hit-marker.is-on { opacity: 1; }
+
+      /* 血量：左下角，条 + 数字 */
+      #hud-health {
+        position: absolute;
+        left: 24px;
+        bottom: 24px;
+        width: 208px;
+        padding: 10px 12px;
+        background: rgba(12, 14, 18, 0.62);
         border: 1px solid rgba(232, 220, 200, 0.16);
         border-radius: 8px;
         backdrop-filter: blur(6px);
-        font-size: 12px;
-        line-height: 1.9;
       }
-      .panel h1 {
-        margin: 0 0 8px;
-        font-size: 13px;
-        font-weight: 600;
-        letter-spacing: 0.04em;
-        color: #ffd166;
-      }
-      .row {
+      #hud-health .label {
         display: flex;
         justify-content: space-between;
-        gap: 16px;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        color: rgba(232, 220, 200, 0.62);
+        margin-bottom: 6px;
       }
-      .row span { color: rgba(232, 220, 200, 0.6); }
-      .row b { font-weight: 600; font-variant-numeric: tabular-nums; }
-      .row b.warn { color: #ff8a5c; }
-      .hint {
+      #hud-health .bar {
+        height: 8px;
+        border-radius: 4px;
+        background: rgba(232, 220, 200, 0.12);
+        overflow: hidden;
+      }
+      #hud-hp-fill {
+        height: 100%;
+        width: 100%;
+        border-radius: 4px;
+        background: linear-gradient(90deg, #7fbf5a, #c8d25a);
+        transition: width 0.12s linear, background 0.2s linear;
+      }
+
+      /* 弹药：右下角 */
+      #hud-ammo-box {
         position: absolute;
-        bottom: 16px;
+        right: 24px;
+        bottom: 24px;
+        min-width: 132px;
+        padding: 10px 14px;
+        text-align: right;
+        background: rgba(12, 14, 18, 0.62);
+        border: 1px solid rgba(232, 220, 200, 0.16);
+        border-radius: 8px;
+        backdrop-filter: blur(6px);
+      }
+      #hud-ammo-box .label {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        color: rgba(232, 220, 200, 0.62);
+      }
+      #hud-ammo {
+        font-size: 26px;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.1;
+        color: #ffd166;
+      }
+      #hud-ammo.is-reloading { color: rgba(232, 220, 200, 0.45); }
+
+      /* 顶部信息条：时间 / 天气 / 击杀 / FPS */
+      #hud-top {
+        position: absolute;
+        top: 16px;
         left: 50%;
         transform: translateX(-50%);
-        padding: 8px 16px;
-        background: rgba(20, 17, 13, 0.78);
+        display: flex;
+        gap: 18px;
+        padding: 8px 18px;
+        background: rgba(12, 14, 18, 0.62);
         border: 1px solid rgba(232, 220, 200, 0.16);
         border-radius: 999px;
+        backdrop-filter: blur(6px);
         font-size: 12px;
-        color: rgba(232, 220, 200, 0.75);
-        white-space: nowrap;
+        font-variant-numeric: tabular-nums;
+        color: rgba(232, 220, 200, 0.78);
       }
-      .hint kbd {
-        display: inline-block;
-        padding: 1px 6px;
-        margin: 0 2px;
-        border: 1px solid rgba(232, 220, 200, 0.28);
-        border-radius: 4px;
-        background: rgba(232, 220, 200, 0.08);
-        font: inherit;
+      #hud-top b { color: #e8dcc8; font-weight: 600; }
+
+      #hud-status {
+        position: absolute;
+        top: 58%;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 10px 20px;
+        background: rgba(12, 14, 18, 0.72);
+        border: 1px solid rgba(232, 220, 200, 0.18);
+        border-radius: 8px;
+        font-size: 14px;
+        letter-spacing: 0.04em;
         color: #ffd166;
+        opacity: 0;
+        transition: opacity 0.2s linear;
+      }
+      #hud-status.is-on { opacity: 1; }
+
+      /* 开始遮罩：必须接住第一次点击，AudioContext 与 pointerlock 都要手势 */
+      #start-overlay {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        background: radial-gradient(circle at 50% 45%, rgba(24, 20, 16, 0.82), rgba(6, 7, 9, 0.96));
+        font-size: 15px;
+        letter-spacing: 0.12em;
+        color: #e8dcc8;
+        cursor: pointer;
+        z-index: 20;
+        transition: opacity 0.25s linear;
+        text-align: center;
+        padding: 24px;
+        line-height: 1.9;
+      }
+      #start-overlay::after {
+        content: "WASD 移动 · Shift 疾跑 · 左键射击 · R 换弹 · P 切天气 · Esc 释放鼠标";
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        color: rgba(232, 220, 200, 0.55);
+      }
+
+      /* 天气选项卡：HUD 是 pointer-events:none，这块单独打开 */
+      #weather-tabs {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        display: flex;
+        gap: 6px;
+        padding: 8px;
+        pointer-events: auto;
+        background: rgba(12, 14, 18, 0.62);
+        border: 1px solid rgba(232, 220, 200, 0.16);
+        border-radius: 8px;
+        backdrop-filter: blur(6px);
+        z-index: 10;
+      }
+      #weather-tabs button {
+        padding: 6px 14px;
+        border: 1px solid rgba(232, 220, 200, 0.22);
+        border-radius: 6px;
+        background: rgba(232, 220, 200, 0.06);
+        color: rgba(232, 220, 200, 0.72);
+        font: inherit;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
+      }
+      #weather-tabs button:hover { background: rgba(232, 220, 200, 0.14); color: #e8dcc8; }
+      #weather-tabs button[aria-pressed='true'] {
+        background: rgba(255, 209, 102, 0.16);
+        border-color: rgba(255, 209, 102, 0.6);
+        color: #ffd166;
+      }
+      #weather-tabs button:focus-visible { outline: 2px solid #ffd166; outline-offset: 1px; }
+
+      .fatal {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 32px;
+        text-align: center;
+        color: #ff8a5c;
+        font-size: 14px;
+        line-height: 1.9;
       }
     </style>
   </head>
@@ -84,21 +253,36 @@
     <div id="game-root"></div>
 
     <div id="hud">
-      <div class="panel">
-        <h1>2.5D 遮挡验证</h1>
-        <div class="row"><span>FPS</span><b id="hud-fps">--</b></div>
-        <div class="row"><span>丧尸</span><b id="hud-zombies">--</b></div>
-        <div class="row"><span>坐标</span><b id="hud-coords">--</b></div>
-        <div class="row"><span>被树遮挡</span><b id="hud-occluded">--</b></div>
-        <div class="row"><span>阴影</span><b id="hud-shadows">--</b></div>
-        <div class="row"><span>网格</span><b id="hud-grid">--</b></div>
+      <div id="hud-crosshair">
+        <span class="n"></span><span class="s"></span><span class="w"></span><span class="e"></span>
+      </div>
+      <div id="hud-hit-marker"></div>
+
+      <div id="hud-top">
+        <span>时间 <b id="hud-clock">--</b></span>
+        <span>天气 <b id="hud-weather">--</b></span>
+        <span>击杀 <b id="hud-kills">0</b></span>
+        <span>FPS <b id="hud-fps">--</b></span>
       </div>
 
-      <div class="hint">
-        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移动 ·
-        <kbd>F</kbd> 阴影开关 · <kbd>G</kbd> 网格开关
+      <div id="hud-health">
+        <div class="label"><span>生命</span><b id="hud-hp-text">100</b></div>
+        <div class="bar"><div id="hud-hp-fill"></div></div>
       </div>
+
+      <div id="hud-ammo-box">
+        <div class="label">弹匣</div>
+        <div id="hud-ammo">12</div>
+      </div>
+
+      <div id="hud-status"></div>
     </div>
+
+    <div id="hud-hurt"></div>
+
+    <div id="weather-tabs" role="group" aria-label="天气选择"></div>
+
+    <div id="start-overlay">点击开始</div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>
