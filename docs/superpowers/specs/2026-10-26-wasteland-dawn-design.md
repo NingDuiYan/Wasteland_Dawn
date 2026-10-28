@@ -1,4 +1,4 @@
-# 废土黎明 Wasteland Dawn — 设计文档
+# 求生 Survival — 设计文档（原《废土黎明 Wasteland Dawn》）
 
 > **⚠️ 已废弃（2026-10-28）**：本文描述的是 Phaser 2.5D 顶视角守家方案，项目已在 2026-10-28 整体重做为 **Three.js 第一人称射击 + 程序化小镇**，素材与 Phaser 全部移除。
 > 现行设计文档：[2026-10-28-fps-town-design.md](2026-10-28-fps-town-design.md)。本文仅作历史参考，其中的玩法与数值均不再生效。
