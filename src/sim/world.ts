@@ -8,9 +8,17 @@
  * 坐标约定与世界一致：x 向东、z 向南、y 向上，yaw=0 面向 -z（北）。
  */
 
-import { GUN, PLAYER, TIME, WORLD_EXTENT, ZOMBIE } from '../config'
+import { PLAYER, TIME, WORLD_EXTENT, ZOMBIE } from '../config'
+import { DEFAULT_LOADOUT, GUNS, THROWABLES, slotSpec } from '../weapons'
+import type { GunSpec, Loadout, MeleeSpec, ThrowableSpec, WeaponId, WeaponSlot, WeaponSpec } from '../weapons'
+import { blastDamage, createGrenade, stepGrenade } from './grenade'
+import type { Explosion, GrenadeState } from './grenade'
 import { Rng } from './random'
+import { castPellet, meleeTargets, nearestTarget, rangePoint, spreadDirection } from './shooting'
+import type { PelletHit, ShotResult } from './shooting'
 import type { Box, TownLayout } from './town'
+
+export type { ShotKind, ShotResult } from './shooting'
 
 /** 每帧输入（-1..1 归一化后的轴向量 + 疾跑） */
 export interface InputState {
@@ -27,8 +35,17 @@ export interface PlayerState {
   /** 俯仰（弧度），正数抬头 */
   pitch: number
   hp: number
-  /** 弹匣内剩余子弹 */
-  ammo: number
+  /** 当前拿在手上的槽位 */
+  slot: WeaponSlot
+  /** 本局装备方案：四个槽位各自的武器 id */
+  loadout: Loadout
+  /**
+   * 每把枪自己的弹匣余弹：按武器记而不是按槽位记，
+   * 换到副武器再换回来，主武器还剩几发就是几发。近战与投掷填 0 占位。
+   */
+  ammoByWeapon: Record<WeaponId, number>
+  /** 剩余投掷物数量 */
+  throwLeft: number
   /** 换弹剩余时间，>0 表示正在换弹 */
   reloadLeft: number
   /** 开火冷却 */
@@ -62,24 +79,14 @@ export interface ZombieState {
   deadElapsed: number
 }
 
-export type ShotKind = 'zombie' | 'world' | 'none'
-
-export interface ShotResult {
-  kind: ShotKind
-  /** 命中丧尸时的 id */
-  zombieId: number
-  x: number
-  y: number
-  z: number
-  distance: number
-  /** 这一枪是否把丧尸打死了 */
-  killed: boolean
-}
-
 /** 尸体停留时长：够玩家看清"打中了"，又不至于堆满地面 */
 const CORPSE_SEC = 2.2
 /** 走一步的动画频率倍数 */
 const STRIDE = 3.4
+/** 两次投掷的最小间隔：手滑连点也不会一次扔出两个 */
+const THROW_INTERVAL_SEC = 0.35
+/** 丧尸受击白闪持续时长：短到像被打了一下，长到肉眼能看见 */
+const ZOMBIE_HURT_SEC = 0.12
 
 function clamp(value: number, min: number, max: number): number {
   return value < min ? min : value > max ? max : value
@@ -88,6 +95,13 @@ function clamp(value: number, min: number, max: number): number {
 function wrapAngle(angle: number): number {
   const twoPi = Math.PI * 2
   return ((angle % twoPi) + twoPi) % twoPi
+}
+
+/** 开局的弹匣：每把枪都是满的，近战与投掷不耗弹药，填 0 占位 */
+function initialAmmo(): Record<WeaponId, number> {
+  const ammo: Record<WeaponId, number> = { rifle: 0, shotgun: 0, pistol: 0, revolver: 0, machete: 0, bat: 0, grenade: 0, molotov: 0 }
+  for (const gun of Object.values(GUNS)) ammo[gun.id] = gun.ammoPerMag
+  return ammo
 }
 
 /**
@@ -129,99 +143,58 @@ export function pushOutOfBoxes(x: number, z: number, radius: number, boxes: read
   return { x: px, z: pz }
 }
 
-/** 射线与竖直圆柱（丧尸胶囊体）求交，返回进入距离或 -1 */
-function rayCylinder(
-  ox: number,
-  oy: number,
-  oz: number,
-  dx: number,
-  dy: number,
-  dz: number,
-  cx: number,
-  cz: number,
-  radius: number,
-  height: number,
-): number {
-  const mx = ox - cx
-  const mz = oz - cz
-  const a = dx * dx + dz * dz
-  if (a < 1e-8) return -1
-  const b = 2 * (mx * dx + mz * dz)
-  const c = mx * mx + mz * mz - radius * radius
-  const disc = b * b - 4 * a * c
-  if (disc < 0) return -1
-  const sqrt = Math.sqrt(disc)
-  const t1 = (-b - sqrt) / (2 * a)
-  const t2 = (-b + sqrt) / (2 * a)
-  for (const t of [t1, t2]) {
-    if (t <= 0) continue
-    const y = oy + dy * t
-    if (y >= 0 && y <= height) return t
-  }
-  return -1
-}
-
-/** 射线与轴对齐方盒求交（slab 法） */
-function rayBox(
-  ox: number,
-  oy: number,
-  oz: number,
-  dx: number,
-  dy: number,
-  dz: number,
-  box: Box,
-): number {
-  let tMin = 0
-  let tMax = Number.POSITIVE_INFINITY
-  const axes: [number, number, number, number][] = [
-    [ox, dx, box.minX, box.maxX],
-    [oy, dy, 0, box.height],
-    [oz, dz, box.minZ, box.maxZ],
-  ]
-  for (const [origin, direction, min, max] of axes) {
-    if (Math.abs(direction) < 1e-8) {
-      if (origin < min || origin > max) return -1
-      continue
-    }
-    const t1 = (min - origin) / direction
-    const t2 = (max - origin) / direction
-    tMin = Math.max(tMin, Math.min(t1, t2))
-    tMax = Math.min(tMax, Math.max(t1, t2))
-    if (tMin > tMax) return -1
-  }
-  return tMin > 0 ? tMin : -1
-}
-
 export class World {
   readonly layout: TownLayout
-  readonly player: PlayerState = {
-    x: 0,
-    z: 0,
-    yaw: 0,
-    pitch: 0,
-    hp: PLAYER.hp,
-    ammo: GUN.ammoPerMag,
-    reloadLeft: 0,
-    fireLeft: 0,
-    hurtLeft: 0,
-    dead: false,
-  }
-
+  readonly player: PlayerState
   readonly zombies: ZombieState[] = []
+  /** 空中的投掷物：渲染层每帧读它画手雷 */
+  readonly grenades: GrenadeState[] = []
   kills = 0
   elapsedSec = 0
 
   private readonly rng: Rng
+  /** 本帧待消费的爆炸事件，由 drainExplosions 取走 */
+  private readonly explosions: Explosion[] = []
   private nextZombieId = 1
+  private nextGrenadeId = 1
   private respawnLeft = 0
 
-  constructor(layout: TownLayout, seed: number) {
+  constructor(layout: TownLayout, seed: number, loadout: Loadout = { ...DEFAULT_LOADOUT }) {
     this.layout = layout
     this.rng = new Rng(seed ^ 0x9e3779b9)
-    this.player.x = layout.spawn.x
-    this.player.z = layout.spawn.z
-    this.player.yaw = layout.spawn.yaw
+    this.player = {
+      x: layout.spawn.x,
+      z: layout.spawn.z,
+      yaw: layout.spawn.yaw,
+      pitch: 0,
+      hp: PLAYER.hp,
+      slot: 'primary',
+      loadout,
+      ammoByWeapon: initialAmmo(),
+      throwLeft: THROWABLES[loadout.throwable].count,
+      reloadLeft: 0,
+      fireLeft: 0,
+      hurtLeft: 0,
+      dead: false,
+    }
     for (let i = 0; i < Math.min(6, ZOMBIE.maxAlive); i += 1) this.spawnZombie(true)
+  }
+
+  /** 当前拿在手上的武器数值 */
+  get weapon(): WeaponSpec {
+    return slotSpec(this.player.loadout, this.player.slot)
+  }
+
+  /** 当前枪械的弹匣余弹；近战与投掷不耗弹药，返回 0 */
+  get ammo(): number {
+    const spec = this.weapon
+    return spec.kind === 'gun' ? this.player.ammoByWeapon[spec.id] : 0
+  }
+
+  /** 当前枪械换弹需要多久；非枪械返回 0，HUD 拿它画换弹进度 */
+  get reloadTotalSec(): number {
+    const spec = this.weapon
+    return spec.kind === 'gun' ? spec.reloadSec : 0
   }
 
   /** 当前时刻（0..24） */
@@ -252,6 +225,7 @@ export class World {
     this.advanceTimers(dtSec)
     this.movePlayer(dtSec, input)
     this.stepZombies(dtSec)
+    this.stepGrenades(dtSec)
     this.tickRespawn(dtSec)
   }
 
@@ -263,7 +237,9 @@ export class World {
       p.reloadLeft -= dtSec
       if (p.reloadLeft <= 0) {
         p.reloadLeft = 0
-        p.ammo = GUN.ammoPerMag
+        // 换弹期间切槽会取消换弹，所以走到这里时手上的枪还是开换的那把
+        const spec = this.weapon
+        if (spec.kind === 'gun') p.ammoByWeapon[spec.id] = spec.ammoPerMag
       }
     }
     // 脱离战斗后缓慢回血：让玩家敢从小规模遭遇战里撤出来
@@ -413,115 +389,173 @@ export class World {
     }
   }
 
-  /** 换弹：弹匣已满或者正在换弹就忽略 */
+  /**
+   * 切槽：正在进行的换弹会被取消（换一半换走就白换了），各枪的弹匣余量各自保留。
+   * 出手冷却也一并清掉 —— 留着上一把枪的冷却会让新武器"拔出来打不动"，
+   * 手感上像卡住了（例如挥完棒子立刻切燃烧瓶却扔不出去）
+   */
+  switchSlot(slot: WeaponSlot): void {
+    const p = this.player
+    if (p.dead || p.slot === slot) return
+    p.slot = slot
+    p.reloadLeft = 0
+    p.fireLeft = 0
+  }
+
+  /** 换弹：只对枪械生效，弹匣已满或者正在换弹就忽略 */
   reload(): void {
     const p = this.player
-    if (p.dead || p.reloadLeft > 0 || p.ammo >= GUN.ammoPerMag) return
-    p.reloadLeft = GUN.reloadSec
+    const spec = this.weapon
+    if (p.dead || p.reloadLeft > 0 || spec.kind !== 'gun') return
+    if (p.ammoByWeapon[spec.id] >= spec.ammoPerMag) return
+    p.reloadLeft = spec.reloadSec
   }
 
   /**
-   * 开一枪；返回 null 表示枪还没响（冷却中 / 换弹中 / 没子弹 / 已死亡）
+   * 扣一次扳机；返回 null 表示这一下没发生（冷却中 / 换弹中 / 弹药耗尽 / 已死亡）
    *
-   * 命中判定完全在同一帧内完成：先求最近的丧尸交点，再求最近的场景遮挡交点，
-   * 取更近的那个。这个顺序保证"墙后的丧尸打不到"，而不是先打中再判断遮挡。
+   * 三个槽位的手感完全不同，这里只做分发；连发与否由渲染层按 spec.auto 决定。
    */
   shoot(): ShotResult | null {
     const p = this.player
-    if (p.dead || p.fireLeft > 0 || p.reloadLeft > 0) return null
-    if (p.ammo <= 0) {
+    if (p.dead) return null
+    const spec = this.weapon
+    if (spec.kind === 'gun') return this.fireGun(spec)
+    if (spec.kind === 'melee') return this.swingMelee(spec)
+    return this.throwThrowable(spec)
+  }
+
+  /** 取走本帧的爆炸事件并清空队列：渲染层每帧调一次，取走之后就没了 */
+  drainExplosions(): Explosion[] {
+    return this.explosions.splice(0, this.explosions.length)
+  }
+
+  /** 开火：每颗弹丸独立散布、独立判定，命中谁算谁 */
+  private fireGun(spec: GunSpec): ShotResult | null {
+    const p = this.player
+    if (p.fireLeft > 0 || p.reloadLeft > 0) return null
+    if (p.ammoByWeapon[spec.id] <= 0) {
+      // 空仓时扣扳机自动换弹：玩家听到一声空枪就够了，不必再手动按一次
       this.reload()
       return null
     }
-    p.ammo -= 1
-    p.fireLeft = GUN.fireIntervalSec
-    if (p.ammo === 0) this.reload()
+    p.ammoByWeapon[spec.id] -= 1
+    p.fireLeft = spec.fireIntervalSec
 
     const ox = p.x
     const oy = PLAYER.eyeHeight
     const oz = p.z
-    const dir = this.direction()
+    let hits = 0
+    let killed = false
+    let zombieHit: PelletHit | null = null
+    let worldHit: PelletHit | null = null
 
-    let zombieDistance = Number.POSITIVE_INFINITY
-    let hitZombie: ZombieState | null = null
-    for (const zombie of this.zombies) {
-      if (zombie.dead) continue
-      const t = rayCylinder(
-        ox,
-        oy,
-        oz,
-        dir.x,
-        dir.y,
-        dir.z,
-        zombie.x,
-        zombie.z,
-        ZOMBIE.hitRadius,
-        ZOMBIE.hitHeight,
-      )
-      if (t > 0 && t < zombieDistance) {
-        zombieDistance = t
-        hitZombie = zombie
+    for (let i = 0; i < spec.pellets; i += 1) {
+      const dir = spreadDirection(p.yaw, p.pitch, spec.spread, this.rng)
+      const hit = castPellet(ox, oy, oz, dir, this.zombies, this.layout.colliders, spec.range)
+      if (hit.kind === 'zombie') {
+        hits += 1
+        if (this.damageZombie(hit.zombieId, spec.damage)) killed = true
+        if (!zombieHit || hit.distance < zombieHit.distance) zombieHit = hit
+      } else if (hit.kind === 'world' && (!worldHit || hit.distance < worldHit.distance)) {
+        worldHit = hit
       }
     }
+    if (p.ammoByWeapon[spec.id] <= 0) this.reload()
 
-    let worldDistance = Number.POSITIVE_INFINITY
-    for (const box of this.layout.colliders) {
-      const t = rayBox(ox, oy, oz, dir.x, dir.y, dir.z, box)
-      if (t > 0 && t < worldDistance) worldDistance = t
-    }
-    // 地面也算遮挡：朝脚下开枪不该穿过地板
-    if (dir.y < -1e-4) {
-      const groundT = -oy / dir.y
-      if (groundT > 0 && groundT < worldDistance) worldDistance = groundT
-    }
-    if (worldDistance > GUN.range) worldDistance = Number.POSITIVE_INFINITY
-
-    if (hitZombie && zombieDistance <= worldDistance) {
-      const killed = this.damageZombie(hitZombie.id, GUN.damage)
-      return this.makeShot('zombie', hitZombie.id, ox, oy, oz, dir, zombieDistance, killed)
-    }
-    if (worldDistance < Number.POSITIVE_INFINITY) {
-      return this.makeShot('world', 0, ox, oy, oz, dir, worldDistance, false)
-    }
-    // 打空了：曳光仍然朝远处飞出去，视觉上不能凭空消失
-    return this.makeShot('none', 0, ox, oy, oz, dir, GUN.range, false)
-  }
-
-  private makeShot(
-    kind: ShotKind,
-    zombieId: number,
-    ox: number,
-    oy: number,
-    oz: number,
-    dir: { x: number; y: number; z: number },
-    distance: number,
-    killed: boolean,
-  ): ShotResult {
+    // 齐射取最近的丧尸命中点（渲染层要在那里放血花），一颗都没打中才退到墙面
+    const pick = zombieHit ?? worldHit ?? rangePoint(ox, oy, oz, p.yaw, p.pitch, spec.range)
     return {
-      kind,
-      zombieId,
-      x: ox + dir.x * distance,
-      y: oy + dir.y * distance,
-      z: oz + dir.z * distance,
-      distance,
+      action: 'fired',
+      kind: zombieHit ? 'zombie' : worldHit ? 'world' : 'none',
+      zombieId: pick.zombieId,
+      x: pick.x,
+      y: pick.y,
+      z: pick.z,
+      distance: pick.distance,
       killed,
+      hits,
     }
   }
 
-  /** 含散布的射击方向（yaw 与 pitch 各自加一点随机） */
-  private direction(): { x: number; y: number; z: number } {
+  /** 挥砍：扇形内的活丧尸全部吃伤害，命中数就是扫到几只 */
+  private swingMelee(spec: MeleeSpec): ShotResult | null {
     const p = this.player
-    const yaw = p.yaw + this.rng.range(-GUN.spread, GUN.spread)
-    const pitch = clamp(p.pitch + this.rng.range(-GUN.spread, GUN.spread), -1.45, 1.45)
-    const cosPitch = Math.cos(pitch)
-    return { x: -Math.sin(yaw) * cosPitch, y: Math.sin(pitch), z: -Math.cos(yaw) * cosPitch }
+    if (p.fireLeft > 0) return null
+    p.fireLeft = spec.fireIntervalSec
+
+    const targets = meleeTargets(this.zombies, p.x, p.z, p.yaw, spec.range, spec.arcRad)
+    let killed = false
+    for (const target of targets) {
+      if (this.damageZombie(target.id, spec.damage)) killed = true
+    }
+
+    // 挥砍是贴着人扫的，命中点取刀刃落点（朝向在有效距离处），渲染层拿它放火花
+    const near = nearestTarget(targets, p.x, p.z)
+    const blade = rangePoint(p.x, PLAYER.eyeHeight, p.z, p.yaw, p.pitch, spec.range)
+    return {
+      action: 'swung',
+      kind: near ? 'zombie' : 'none',
+      zombieId: near ? near.target.id : 0,
+      x: blade.x,
+      y: blade.y,
+      z: blade.z,
+      distance: near ? near.distance : spec.range,
+      killed,
+      hits: targets.length,
+    }
+  }
+
+  /** 投掷：只生成实体，伤害与爆炸由 stepGrenades 在引信走完时结算 */
+  private throwThrowable(spec: ThrowableSpec): ShotResult | null {
+    const p = this.player
+    if (p.throwLeft <= 0 || p.fireLeft > 0) return null
+    p.throwLeft -= 1
+    p.fireLeft = THROW_INTERVAL_SEC
+    const grenade = createGrenade(this.nextGrenadeId, spec, { x: p.x, y: PLAYER.eyeHeight, z: p.z, yaw: p.yaw })
+    this.nextGrenadeId += 1
+    this.grenades.push(grenade)
+    // 投掷没有命中点，但调用方需要一个事件来播音效与视图模型动作
+    return {
+      action: 'thrown',
+      kind: 'none',
+      zombieId: 0,
+      x: grenade.x,
+      y: grenade.y,
+      z: grenade.z,
+      distance: 0,
+      killed: false,
+      hits: 0,
+    }
+  }
+
+  /** 推进所有投掷物；引信到点的就地引爆，倒着遍历才能在循环里删除 */
+  private stepGrenades(dtSec: number): void {
+    for (let i = this.grenades.length - 1; i >= 0; i -= 1) {
+      const grenade = this.grenades[i]
+      stepGrenade(grenade, dtSec, this.layout.colliders)
+      if (grenade.fuseLeft > 0) continue
+      this.grenades.splice(i, 1)
+      this.explode(grenade)
+    }
+  }
+
+  /** 爆炸：半径内按距离线性衰减扣血，不做遮挡判定，也不伤玩家 */
+  private explode(grenade: GrenadeState): void {
+    for (const zombie of this.zombies) {
+      if (zombie.dead) continue
+      const amount = blastDamage(grenade.spec, grenade.x, grenade.z, zombie)
+      if (amount <= 0) continue
+      this.damageZombie(zombie.id, amount)
+    }
+    this.explosions.push({ x: grenade.x, y: grenade.y, z: grenade.z, radius: grenade.spec.radius })
   }
 
   damageZombie(id: number, amount: number): boolean {
     const zombie = this.zombies.find((z) => z.id === id)
     if (!zombie || zombie.dead) return false
     zombie.hp -= amount
-    zombie.hurtLeft = 0.12
+    zombie.hurtLeft = ZOMBIE_HURT_SEC
     if (zombie.hp > 0) return false
     zombie.dead = true
     zombie.deadElapsed = 0

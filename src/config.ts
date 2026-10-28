@@ -53,6 +53,13 @@ export const TOWN = {
   /** 街道两侧立面的窗户层高与列距（米），用来算每面墙几扇窗 */
   windowFloorHeight: 3.1,
   windowSpacing: 2.7,
+  /** 窗户本体尺寸：玻璃 + 窗框 + 窗台。三者叠起来才不是"贴在墙上的色块" */
+  windowWidth: 0.95,
+  windowHeight: 1.15,
+  windowFrame: 0.09,
+  windowDepth: 0.07,
+  windowSillDepth: 0.2,
+  windowSillHeight: 0.09,
   /** 各类道具数量：按"走两条街能遇到一个"来控制密度 */
   carCount: 14,
   barrelCount: 18,
@@ -62,6 +69,12 @@ export const TOWN = {
   lampCount: 12,
   /** 栅栏段数量（沿地块边界，带缺口） */
   fenceSegments: 18,
+  /** 街道家具：沿人行道按间隔撒。数量直接决定"这条街有多热闹" */
+  binCount: 22,
+  hydrantCount: 14,
+  poleCount: 16,
+  signCount: 10,
+  dumpsterCount: 8,
 } as const
 
 /** 玩家 */
@@ -92,22 +105,11 @@ export const VIEW = {
   far: 340,
 } as const
 
-/** 手枪 */
-export const GUN = {
-  damage: 34,
-  fireIntervalSec: 0.15,
-  range: 80,
-  /** 弹道散布（弧度）；0 会让枪像激光，玩家反而感觉不到准 */
-  spread: 0.012,
-  ammoPerMag: 12,
-  reloadSec: 1.4,
-  /** 后坐：枪身后退距离与抬枪角度 */
-  recoilKick: 0.06,
-  recoilDeg: 1.7,
-  /** 枪口火光持续时间 */
-  muzzleFlashSec: 0.055,
-  /** 弹道曳光在场景里留多久 */
-  tracerSec: 0.045,
+/** 游戏标识：标题、副标题与版本，界面文案统一从这里取 */
+export const GAME = {
+  name: '求生',
+  subtitle: 'Survival',
+  version: '0.3.0',
 } as const
 
 /** 丧尸 */
@@ -161,11 +163,11 @@ export const SKY = {
   sunDusk: 0xff8a44,
   sunNight: 0x6b86bd,
   /** 太阳强度：正午最亮，夜里换成月光（弱一个量级） */
-  sunIntensityDay: 2.4,
-  sunIntensityNight: 0.55,
+  sunIntensityDay: 3.1,
+  sunIntensityNight: 0.32,
   /** 半球光强度 */
-  ambientIntensityDay: 1.05,
-  ambientIntensityNight: 0.45,
+  ambientIntensityDay: 0.5,
+  ambientIntensityNight: 0.3,
   /** 天顶色：只在天亮时往这个蓝调上靠，夜里天球必须比地平线更暗 */
   zenith: 0x2a4f7d,
   /** 窗户与路灯在夜里才亮 */
@@ -173,6 +175,9 @@ export const SKY = {
   windowEmissiveDay: 0.04,
   lampIntensityNight: 46,
   lampIntensityDay: 0,
+  /** 招牌：夜里比窗户更亮，是街上唯一的彩色光源 */
+  signEmissiveNight: 3.4,
+  signEmissiveDay: 0.08,
   /** 冷暖交界：日落后多少弧度内开始偏橙 */
   duskBand: 0.35,
 } as const
@@ -281,6 +286,53 @@ export const LIGHTING = {
   campLight: { radius: 0.3, strength: 0.35 },
 } as const
 
+/**
+ * 立面装饰：雨棚 / 招牌 / 门廊 / 海报
+ * 有与无按建筑 id 哈希决定（不是随机数），所以刷新页面同一栋楼永远是同一副样子
+ */
+export const FACADE = {
+  awningWidth: 2.9,
+  awningDepth: 1.3,
+  awningY: 2.6,
+  awningThickness: 0.16,
+  /** 前沿垂布：雨棚边缘挂下来的一片，风一吹最先晃的就是它 */
+  awningValance: 0.24,
+  /** 正值 = 外沿下垂，雨水才"流出去"而不是倒灌 */
+  awningTilt: 0.26,
+  signWidth: 2.0,
+  signHeight: 0.66,
+  signY: 3.42,
+  porchWidth: 2.1,
+  porchDepth: 1.05,
+  porchHeight: 0.16,
+  porchRoofY: 2.52,
+  posterWidth: 0.56,
+  posterHeight: 0.8,
+  posterY: 1.46,
+  awningChance: 0.55,
+  signChance: 0.5,
+  porchChance: 0.6,
+  posterChance: 0.55,
+} as const
+
+/** 树：树干 + 三段斜枝 + 枝端叶团。单靠"树干顶一个球"会读成蘑菇 */
+export const TREE = {
+  trunkHeight: 3.3,
+  trunkRadius: 0.17,
+  /** 四根枝，角度与长度各自抖动：三根等距会读成风车 */
+  branchCount: 4,
+  branchLength: 1.9,
+  branchRadius: 0.11,
+  /** 分叉点高度占树干的比例 */
+  branchBase: 0.6,
+  /** 枝条倾角基准（弧度）：太小就竖直，叶团全挤在一点变成蘑菇 */
+  branchTilt: 0.74,
+  /** 叶团半径；比枝间距小，树冠才不会糊成一大团 */
+  foliageRadius: 0.78,
+  /** 叶团纵向压扁：树冠是横着铺开的 */
+  foliageSquash: 0.72,
+} as const
+
 /** 颜色：整镇的调色板集中在这里，改氛围只改这张表 */
 export const PALETTE = {
   dirt: 0x4a4034,
@@ -296,6 +348,24 @@ export const PALETTE = {
   metal: 0x585856,
   rust: 0x8a4a2c,
   carPaint: [0x5c6b74, 0x7a4a3e, 0x6e6a4a, 0x45505c, 0x7c7466],
+  awning: [0x8a4436, 0x3f5a4a, 0x6d5a2e, 0x54405c],
+  poster: [0xb8452f, 0xc9b06a, 0x5b7f8c, 0xa8743a],
+  /** 招牌板：底色近黑，靠自发光在夜里出彩 */
+  signBoard: 0x241f1c,
   zombieSkin: [0x8f9c78, 0x7e8f6c, 0xa08c72],
   zombieCloth: [0x33302a, 0x3b332c, 0x2b2f35],
+  /** 武器与枪口特效：视图模型、曳光、投掷物共用，避免渲染层散落十六进制 */
+  gunBody: 0x2c2f33,
+  gunMetal: 0x3a3d42,
+  gunGrip: 0x24211d,
+  gunWood: 0x6b4b2a,
+  blade: 0x9aa0a6,
+  tracer: 0xffe0a8,
+  muzzle: 0xfff0d8,
+  grenadeBody: 0x39432c,
+  molotov: 0xd08a3a,
+  explosion: 0xffb457,
+  /** 场景里的两盏真实灯：手持照明与最近的路灯 */
+  handLight: 0xfff0d8,
+  streetLamp: 0xffd6a2,
 } as const

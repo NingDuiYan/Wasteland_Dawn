@@ -7,7 +7,7 @@
  */
 
 import * as THREE from 'three'
-import { SKY, TIME, VIEW, WORLD_EXTENT } from '../config'
+import { SKY, TIME, VIEW } from '../config'
 import type { WeatherState } from '../sim/weather'
 
 const SKY_VERT = `
@@ -38,6 +38,9 @@ function mixColor(out: THREE.Color, night: number, day: number, amount: number):
   out.setHex(night).lerp(new THREE.Color(day), amount)
 }
 
+/** 阴影相机覆盖的半边长（米）：只保玩家周围这一圈，换清晰度 */
+const SHADOW_EXTENT = 62
+
 export interface SkyState {
   /** 0 = 深夜，1 = 正午 */
   daylight: number
@@ -58,18 +61,19 @@ export class SkyRig {
   constructor(private readonly scene: THREE.Scene) {
     this.sun.position.set(40, 60, 20)
     this.sun.castShadow = true
-    // 一张覆盖整个小镇的阴影贴图：小镇 220 米，1024 够分出房子和树的轮廓，
-    // 再高的分辨率在这个尺度上看不出差别，只会多占显存
-    this.sun.shadow.mapSize.set(512, 512)
+    // 阴影相机只覆盖玩家周围这一圈，并且每帧跟着玩家走：
+    // 想用一张贴图盖住整个 220 米小镇，512 分辨率下一个texel接近一米，影子会糊成一片灰。
+    // 收窄到 ±SHADOW_EXTENT 之后，同样的贴图能把墙根、屋檐、电线杆的影子投清楚。
+    this.sun.shadow.mapSize.set(2048, 2048)
     const shadowCamera = this.sun.shadow.camera
-    shadowCamera.left = -WORLD_EXTENT
-    shadowCamera.right = WORLD_EXTENT
-    shadowCamera.top = WORLD_EXTENT
-    shadowCamera.bottom = -WORLD_EXTENT
-    shadowCamera.near = 1
-    shadowCamera.far = 260
-    this.sun.shadow.bias = -0.0012
-    this.sun.shadow.normalBias = 0.4
+    shadowCamera.left = -SHADOW_EXTENT
+    shadowCamera.right = SHADOW_EXTENT
+    shadowCamera.top = SHADOW_EXTENT
+    shadowCamera.bottom = -SHADOW_EXTENT
+    shadowCamera.near = 8
+    shadowCamera.far = 180
+    this.sun.shadow.bias = -0.0006
+    this.sun.shadow.normalBias = 0.12
     this.scene.add(this.sun)
     this.scene.add(this.sun.target)
     this.scene.add(this.ambient)
@@ -128,11 +132,18 @@ export class SkyRig {
     const span = Math.max(0.001, TIME.duskHour - TIME.dawnHour)
     const arc = Math.min(Math.PI, Math.max(0, ((hour - TIME.dawnHour) / span) * Math.PI))
     const radius = 70
+    // 阴影相机跟着玩家，所以太阳也要跟着：光的方向不变，位置整体平移，
+    // 这样阴影贴图永远覆盖玩家视野，远处没影子也看不出来
+    const focus = this.scene.getObjectByName('main-camera')
+    const focusX = focus ? focus.position.x : 0
+    const focusZ = focus ? focus.position.z : 0
+    this.sun.target.position.set(focusX, 0, focusZ)
+    this.sun.target.updateMatrixWorld()
     this.sun.position.set(
-      Math.cos(arc) * radius,
+      focusX + Math.cos(arc) * radius,
       // 太阳别真的压到地平线：贴地时所有立面几乎收不到光，镇子会变成一片灰
       Math.max(18, Math.sin(arc) * radius * 0.92 + 6),
-      -26 + Math.sin(arc) * 14,
+      focusZ - 26 + Math.sin(arc) * 14,
     )
 
     // 雾：夜里更浓（视野变窄），天气再叠一层

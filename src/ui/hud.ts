@@ -10,6 +10,8 @@ export interface HudElements {
   hpFill: HTMLElement
   hpText: HTMLElement
   ammoText: HTMLElement
+  weaponText: HTMLElement
+  throwText: HTMLElement
   killsText: HTMLElement
   clockText: HTMLElement
   weatherText: HTMLElement
@@ -28,7 +30,10 @@ function pick(id: string): HTMLElement {
 export class Hud {
   private readonly el: HudElements
   private lastHp = -1
-  private lastAmmo = -1
+  /** 弹药区按最终文案缓存：近战/投掷的「—」与换弹的「换弹…」都不是数字 */
+  private lastAmmoText = ''
+  private lastWeapon = ''
+  private lastThrow = -1
   private lastKills = -1
   private lastClock = ''
   private lastWeather = ''
@@ -40,6 +45,8 @@ export class Hud {
       hpFill: pick('hud-hp-fill'),
       hpText: pick('hud-hp-text'),
       ammoText: pick('hud-ammo'),
+      weaponText: pick('hud-weapon'),
+      throwText: pick('hud-throw'),
       killsText: pick('hud-kills'),
       clockText: pick('hud-clock'),
       weatherText: pick('hud-weather'),
@@ -60,12 +67,34 @@ export class Hud {
     this.el.hpText.textContent = String(value)
   }
 
-  setAmmo(ammo: number, reloading: boolean): void {
-    const key = ammo * 2 + (reloading ? 1 : 0)
-    if (key === this.lastAmmo) return
-    this.lastAmmo = key
-    this.el.ammoText.textContent = reloading ? '换弹…' : String(ammo)
+  /**
+   * @param ammo 当前弹匣，null 表示该槽没有弹匣（近战/投掷）
+   * @param reloading 换弹中，优先于弹药数显示
+   */
+  setAmmo(ammo: number | null, reloading: boolean): void {
+    const text = reloading ? '换弹…' : ammo === null ? '—' : String(Math.max(0, Math.round(ammo)))
+    if (text === this.lastAmmoText) return
+    this.lastAmmoText = text
+    this.el.ammoText.textContent = text
     this.el.ammoText.classList.toggle('is-reloading', reloading)
+    this.el.ammoText.classList.toggle('is-empty', ammo === null && !reloading)
+  }
+
+  /** 当前武器：武器名 + 槽位名，例如「突击步枪 · 主武器」 */
+  setWeapon(name: string, slotLabel: string): void {
+    const text = name ? name + ' · ' + slotLabel : '—'
+    if (text === this.lastWeapon) return
+    this.lastWeapon = text
+    this.el.weaponText.textContent = text
+  }
+
+  /** 投掷物剩余数；0 时压暗，省得玩家以为还能按 */
+  setThrowable(left: number): void {
+    const value = Math.max(0, Math.round(left))
+    if (value === this.lastThrow) return
+    this.lastThrow = value
+    this.el.throwText.textContent = String(value)
+    this.el.throwText.classList.toggle('is-empty', value === 0)
   }
 
   setKills(kills: number): void {

@@ -12,7 +12,20 @@ import { PALETTE, TOWN, WORLD_EXTENT } from '../config'
 import { Rng } from './random'
 
 export type BuildingKind = 'house' | 'shop' | 'shed'
-export type PropKind = 'car' | 'barrel' | 'crate' | 'tree' | 'rubble' | 'lamp' | 'fence'
+export type PropKind =
+  | 'car'
+  | 'barrel'
+  | 'crate'
+  | 'tree'
+  | 'rubble'
+  | 'lamp'
+  | 'fence'
+  /** 垃圾桶 / 消防栓 / 电线杆 / 路牌 / 大垃圾箱：把人行道填满的街道家具 */
+  | 'bin'
+  | 'hydrant'
+  | 'pole'
+  | 'sign'
+  | 'dumpster'
 
 /** 轴对齐包围盒（XZ）+ 高度：碰撞与射线都用它 */
 export interface Box {
@@ -50,6 +63,9 @@ export interface TownProp {
   /** 同一类道具的配色/形态变体编号 */
   variant: number
 }
+
+/** 街道家具：人行道上的小物件，没有独立碰撞就靠这个联合类型统一处理 */
+type StreetFurniture = 'bin' | 'hydrant' | 'pole' | 'sign' | 'dumpster'
 
 export interface TownLayout {
   seed: number
@@ -161,7 +177,65 @@ export function createTown(seed: number = TOWN.seed): TownLayout {
   placeAlleyProps(layout, rng)
   placeNature(layout, rng)
   placeFences(layout, rng)
+  placeStreetFurniture(layout, rng)
   return layout
+}
+
+/**
+ * 街道家具：沿人行道内侧按间隔撒垃圾桶/消防栓/电线杆/路牌/大垃圾箱
+ *
+ * 街道是玩家看得最多的东西，只铺贴图会像一条空走廊；
+ * 这些小物件是不靠建筑就能"说明这是条街"的最低成本手段。
+ */
+function placeStreetFurniture(layout: TownLayout, rng: Rng): void {
+  const { streets } = layout
+  const inner = layout.streetWidth / 2 + layout.sidewalkWidth * 0.55
+  const quotas: Record<StreetFurniture, number> = {
+    bin: TOWN.binCount,
+    hydrant: TOWN.hydrantCount,
+    pole: TOWN.poleCount,
+    sign: TOWN.signCount,
+    dumpster: TOWN.dumpsterCount,
+  }
+  let id = 6000
+
+  for (const kind of Object.keys(quotas) as StreetFurniture[]) {
+    let placed = 0
+    let guard = 0
+    while (placed < quotas[kind] && guard < quotas[kind] * 60) {
+      guard += 1
+      const vertical = rng.chance(0.5)
+      const line = rng.pick(streets)
+      const along = rng.range(-WORLD_EXTENT + 10, WORLD_EXTENT - 10)
+      const side = rng.chance(0.5) ? 1 : -1
+      const x = vertical ? line + side * inner : along
+      const z = vertical ? along : line + side * inner
+      // 路口留空：那里是玩家转身和看景的地方
+      if (streets.some((s) => Math.abs(x - s) < 7) && streets.some((s) => Math.abs(z - s) < 7)) {
+        continue
+      }
+      const radius = kind === 'dumpster' ? 0.9 : kind === 'pole' ? 0.28 : 0.34
+      const box: Box = {
+        minX: x - radius,
+        maxX: x + radius,
+        minZ: z - radius,
+        maxZ: z + radius,
+        height: kind === 'pole' ? 6.4 : kind === 'dumpster' ? 1.35 : 1.1,
+      }
+      if (layout.colliders.some((c) => overlaps(c, box))) continue
+      layout.props.push({
+        id: id++,
+        kind,
+        x,
+        z,
+        rotY: (vertical ? Math.PI / 2 : 0) + rng.range(-0.12, 0.12),
+        scale: rng.range(0.92, 1.08),
+        variant: rng.int(0, 2),
+      })
+      layout.colliders.push(box)
+      placed += 1
+    }
+  }
 }
 
 /** 街区 → 地块 → 建筑（空的留作荒园，由 placeNature 补树） */

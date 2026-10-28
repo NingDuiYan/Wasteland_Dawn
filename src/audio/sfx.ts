@@ -26,7 +26,9 @@ export class Sfx {
       this.master.connect(this.ctx.destination)
       this.noise = this.createNoise(0.5)
     }
-    void this.ctx.resume()
+    // 未拿到手势授权时 resume 会被拒绝：静默吞掉，等下一次点击再唤醒，
+    // 否则每发子弹都往控制台丢一条警告
+    if (this.ctx.state !== 'running') void this.ctx.resume().catch(() => undefined)
   }
 
   private createNoise(seconds: number): AudioBuffer {
@@ -116,5 +118,27 @@ export class Sfx {
 
   empty(): void {
     this.tone(900, 0.03, 0.12)
+  }
+
+  /** 近战挥砍：高频窄带噪声的"呼"声，刻意不带低频冲击，否则会被听成开枪 */
+  swing(): void {
+    this.burst({ duration: 0.13, gain: 0.28, fromHz: 1800, toHz: 420 })
+  }
+
+  /** 投掷出手：短促闷响，比挥砍更低，听感上"东西飞出去了" */
+  throwOut(): void {
+    this.burst({ duration: 0.11, gain: 0.22, fromHz: 900, toHz: 300, type: "lowpass" })
+  }
+
+  /** 爆炸：低频冲击 + 长尾噪声，比枪声低沉得多，隔着屏幕也能听出是爆炸 */
+  explode(): void {
+    this.burst({ duration: 0.55, gain: 0.95, fromHz: 1200, toHz: 60, type: "lowpass" })
+    this.tone(64, 0.5, 0.6)
+  }
+
+  /** 换武器：两声短促金属咔哒，比换弹更轻更快 */
+  switchWeapon(): void {
+    this.tone(520, 0.03, 0.16)
+    this.tone(360, 0.04, 0.14, 0.07)
   }
 }
